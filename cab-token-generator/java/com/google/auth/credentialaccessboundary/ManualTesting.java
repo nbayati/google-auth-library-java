@@ -14,7 +14,6 @@ import com.google.auth.oauth2.AccessToken;
 import com.google.auth.oauth2.CredentialAccessBoundary;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.OAuth2CredentialsWithRefresh;
-import com.google.auth.oauth2.ServiceAccountCredentials;
 import dev.cel.common.CelValidationException;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -60,13 +59,6 @@ public class ManualTesting {
         GoogleCredentials.getApplicationDefault()
             .createScoped("https://www.googleapis.com/auth/cloud-platform");
 
-    if (!(sourceCredentials instanceof ServiceAccountCredentials)) {
-      throw new IllegalArgumentException(
-          "Client-side CAB currently only supports Service Account credentials. "
-              + "Provided credential type: "
-              + sourceCredentials.getClass().getSimpleName());
-    }
-
     ClientSideCredentialAccessBoundaryFactory factory;
     String type = args[0];
     long minutes = 59;
@@ -82,10 +74,9 @@ public class ManualTesting {
             new OAuth2CredentialsWithRefresh.OAuth2RefreshHandler() {
               @Override
               public AccessToken refreshAccessToken() throws IOException {
-                ServiceAccountCredentials sourceCredentials =
-                    (ServiceAccountCredentials)
-                        GoogleCredentials.getApplicationDefault()
-                            .createScoped("https://www.googleapis.com/auth/cloud-platform");
+                GoogleCredentials sourceCredentials =
+                    GoogleCredentials.getApplicationDefault()
+                        .createScoped("https://www.googleapis.com/auth/cloud-platform");
 
                 ClientSideCredentialAccessBoundaryFactory factory =
                     ClientSideCredentialAccessBoundaryFactory.newBuilder()
