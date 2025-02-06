@@ -69,7 +69,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Internal utilities for the com.google.auth.oauth2 namespace. */
+/**
+ * Internal utilities for the com.google.auth.oauth2 namespace.
+ *
+ * <p>These classes are marked public but should be treated effectively as internal classes only.
+ * They are not subject to any backwards compatibility guarantees and might change or be removed at
+ * any time. They are provided only as a convenience for other libraries within the {@code
+ * com.google.auth} family. Application developers should avoid using these classes directly; they
+ * are not part of the public API.
+ */
 public class OAuth2Utils {
 
   static final String SIGNATURE_ALGORITHM = "SHA256withRSA";
@@ -81,16 +89,7 @@ public class OAuth2Utils {
       "urn:ietf:params:oauth:token-type:access_boundary_intermediary_token";
   static final String GRANT_TYPE_JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
-  // generateIdToken endpoint is to be formatted with universe domain and client email
-  static final String IAM_ID_TOKEN_ENDPOINT_FORMAT =
-      "https://iamcredentials.%s/v1/projects/-/serviceAccounts/%s:generateIdToken";
-
-  static final String IAM_ACCESS_TOKEN_ENDPOINT_FORMAT =
-      "https://iamcredentials.%s/v1/projects/-/serviceAccounts/%s:generateAccessToken";
-  static final String SIGN_BLOB_ENDPOINT_FORMAT =
-      "https://iamcredentials.%s/v1/projects/-/serviceAccounts/%s:signBlob";
   public static final String TOKEN_EXCHANGE_URL_FORMAT = "https://sts.%s/v1/token";
-
   static final URI TOKEN_SERVER_URI = URI.create("https://oauth2.googleapis.com/token");
 
   static final URI TOKEN_REVOKE_URI = URI.create("https://oauth2.googleapis.com/revoke");

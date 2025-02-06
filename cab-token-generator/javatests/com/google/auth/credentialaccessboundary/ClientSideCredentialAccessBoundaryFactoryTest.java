@@ -1,5 +1,5 @@
 /*
- * Copyright 2024, Google LLC
+ * Copyright 2025, Google LLC
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -33,6 +33,7 @@ package com.google.auth.credentialaccessboundary;
 
 import static com.google.auth.oauth2.OAuth2Utils.TOKEN_EXCHANGE_URL_FORMAT;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -44,15 +45,28 @@ import com.google.auth.Credentials;
 import com.google.auth.TestUtils;
 import com.google.auth.credentialaccessboundary.ClientSideCredentialAccessBoundaryFactory.IntermediateCredentials;
 import com.google.auth.credentialaccessboundary.ClientSideCredentialAccessBoundaryFactory.RefreshType;
+import com.google.auth.credentialaccessboundary.protobuf.ClientSideAccessBoundaryProto.ClientSideAccessBoundary;
+import com.google.auth.credentialaccessboundary.protobuf.ClientSideAccessBoundaryProto.ClientSideAccessBoundaryRule;
 import com.google.auth.http.HttpTransportFactory;
 import com.google.auth.oauth2.AccessToken;
+import com.google.auth.oauth2.CredentialAccessBoundary;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.MockStsTransport;
 import com.google.auth.oauth2.MockTokenServerTransportFactory;
 import com.google.auth.oauth2.OAuth2Utils;
 import com.google.auth.oauth2.ServiceAccountCredentials;
+import com.google.common.collect.ImmutableList;
+import com.google.crypto.tink.Aead;
+import com.google.crypto.tink.InsecureSecretKeyAccess;
+import com.google.crypto.tink.KeysetHandle;
+import com.google.crypto.tink.RegistryConfiguration;
+import com.google.crypto.tink.TinkProtoKeysetFormat;
+import dev.cel.common.CelValidationException;
+import dev.cel.expr.Expr;
 import java.io.IOException;
+import java.security.GeneralSecurityException;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import org.junit.Before;
@@ -176,7 +190,7 @@ public class ClientSideCredentialAccessBoundaryFactoryTest {
   @Test
   public void fetchIntermediateCredentials_noExpiresInReturned_copiesSourceExpiration()
       throws Exception {
-    // Simulate STS not returning expires_in
+    // Simulate STS not returning expires_in.
     mockStsTransportFactory.transport.setReturnExpiresIn(false);
 
     GoogleCredentials sourceCredentials =
@@ -197,7 +211,7 @@ public class ClientSideCredentialAccessBoundaryFactoryTest {
 
     // Validate that the expires_in has been copied from the source credential.
     AccessToken sourceAccessToken = sourceCredentials.getAccessToken();
-    assertNotNull(sourceAccessToken); // Assert that sourceAccessToken is not null
+    assertNotNull(sourceAccessToken);
     assertEquals(
         sourceAccessToken.getExpirationTime(), intermediateAccessToken.getExpirationTime());
   }
@@ -363,7 +377,7 @@ public class ClientSideCredentialAccessBoundaryFactoryTest {
     assertEquals("Unable to refresh the provided source credential.", exception.getMessage());
   }
 
-  // Tests related to the builder methods
+  // Tests related to the builder methods.
   @Test
   public void builder_noSourceCredential_throws() {
     NullPointerException exception =
@@ -469,6 +483,96 @@ public class ClientSideCredentialAccessBoundaryFactoryTest {
         exception.getMessage());
   }
 
+  @Test
+  public void builder_invalidRefreshMarginAndMinimumTokenLifetime_throws() throws IOException {
+    GoogleCredentials sourceCredentials =
+        getServiceAccountSourceCredentials(mockTokenServerTransportFactory);
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                ClientSideCredentialAccessBoundaryFactory.newBuilder()
+                    .setSourceCredential(sourceCredentials)
+                    .setRefreshMargin(Duration.ofMinutes(50))
+                    .setMinimumTokenLifetime(Duration.ofMinutes(50))
+                    .build());
+
+    assertEquals(
+        "Refresh margin must be at least one minute longer than the minimum token lifetime.",
+        exception.getMessage());
+  }
+
+  @Test
+  public void builder_invalidRefreshMargin_throws() throws IOException {
+    GoogleCredentials sourceCredentials =
+        getServiceAccountSourceCredentials(mockTokenServerTransportFactory);
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                ClientSideCredentialAccessBoundaryFactory.newBuilder()
+                    .setSourceCredential(sourceCredentials)
+                    .setRefreshMargin(Duration.ofMinutes(25))
+                    .build());
+
+    assertEquals(
+        "Refresh margin must be at least one minute longer than the minimum token lifetime.",
+        exception.getMessage());
+  }
+
+  @Test
+  public void builder_invalidMinimumTokenLifetime_throws() throws IOException {
+    GoogleCredentials sourceCredentials =
+        getServiceAccountSourceCredentials(mockTokenServerTransportFactory);
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                ClientSideCredentialAccessBoundaryFactory.newBuilder()
+                    .setSourceCredential(sourceCredentials)
+                    .setMinimumTokenLifetime(Duration.ofMinutes(50))
+                    .build());
+
+    assertEquals(
+        "Refresh margin must be at least one minute longer than the minimum token lifetime.",
+        exception.getMessage());
+  }
+
+  @Test
+  public void builder_minimumTokenLifetimeNotSet_usesDefault() throws IOException {
+    GoogleCredentials sourceCredentials =
+        getServiceAccountSourceCredentials(mockTokenServerTransportFactory);
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder()
+            .setSourceCredential(sourceCredentials)
+            .setRefreshMargin(Duration.ofMinutes(50))
+            .build();
+
+    assertEquals(
+        ClientSideCredentialAccessBoundaryFactory.DEFAULT_MINIMUM_TOKEN_LIFETIME,
+        factory.getMinimumTokenLifetime());
+  }
+
+  @Test
+  public void builder_refreshMarginNotSet_usesDefault() throws IOException {
+    GoogleCredentials sourceCredentials =
+        getServiceAccountSourceCredentials(mockTokenServerTransportFactory);
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder()
+            .setSourceCredential(sourceCredentials)
+            .setMinimumTokenLifetime(Duration.ofMinutes(20))
+            .build();
+
+    assertEquals(
+        ClientSideCredentialAccessBoundaryFactory.DEFAULT_REFRESH_MARGIN,
+        factory.getRefreshMargin());
+  }
+
   private static GoogleCredentials getServiceAccountSourceCredentials(
       MockTokenServerTransportFactory transportFactory) throws IOException {
     String email = "service-account@google.com";
@@ -544,14 +648,14 @@ public class ClientSideCredentialAccessBoundaryFactoryTest {
     CountDownLatch latch = new CountDownLatch(numThreads);
     long timeoutMillis = 5000; // 5 seconds
 
-    // Create and start the threads
+    // Create and start threads to concurrently call refreshCredentialsIfRequired().
     for (int i = 0; i < numThreads; i++) {
       threads[i] =
           new Thread(
               () -> {
                 try {
-                  latch.countDown(); // Signal thread is ready
-                  latch.await(); // Wait for all threads to be ready
+                  latch.countDown();
+                  latch.await();
                   factory.refreshCredentialsIfRequired();
                 } catch (InterruptedException e) {
                   Thread.currentThread().interrupt();
@@ -561,15 +665,325 @@ public class ClientSideCredentialAccessBoundaryFactoryTest {
               });
       threads[i].start();
     }
+
+    // Wait for each thread to complete, with a timeout.
     for (Thread thread : threads) {
-      thread.join(timeoutMillis); // Wait for each thread to complete
+      thread.join(timeoutMillis);
       if (thread.isAlive()) {
-        thread.interrupt(); // Interrupt the thread if it's still running after the timeout
+        thread.interrupt();
         throw new AssertionError(
             "Thread running refreshCredentialsIfRequired timed out after "
                 + timeoutMillis
                 + " milliseconds.");
       }
     }
+  }
+
+  private static class CabToken {
+    String intermediateToken;
+    String encryptedRestriction;
+
+    CabToken(String intermediateToken, String encryptedRestriction) {
+      this.intermediateToken = intermediateToken;
+      this.encryptedRestriction = encryptedRestriction;
+    }
+  }
+
+  private static CabToken parseCabToken(AccessToken token) {
+    String[] parts = token.getTokenValue().split("\\.");
+    assertEquals(2, parts.length);
+
+    return new CabToken(parts[0], parts[1]);
+  }
+
+  private static ClientSideAccessBoundary decryptRestriction(String restriction, String sessionKey)
+      throws Exception {
+    byte[] rawKey = Base64.getDecoder().decode(sessionKey);
+
+    KeysetHandle keysetHandle =
+        TinkProtoKeysetFormat.parseKeyset(rawKey, InsecureSecretKeyAccess.get());
+
+    Aead aead = keysetHandle.getPrimitive(RegistryConfiguration.get(), Aead.class);
+    byte[] rawRestrictions =
+        aead.decrypt(Base64.getUrlDecoder().decode(restriction), /* associatedData= */ new byte[0]);
+
+    return ClientSideAccessBoundary.parseFrom(rawRestrictions);
+  }
+
+  @Test
+  public void generateToken_withAvailablityCondition_success() throws Exception {
+    MockStsTransportFactory transportFactory = new MockStsTransportFactory();
+    transportFactory.transport.setReturnAccessBoundarySessionKey(true);
+
+    ClientSideCredentialAccessBoundaryFactory.Builder builder =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder();
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        builder
+            .setSourceCredential(
+                getServiceAccountSourceCredentials(mockTokenServerTransportFactory))
+            .setHttpTransportFactory(transportFactory)
+            .build();
+
+    CredentialAccessBoundary.Builder cabBuilder = CredentialAccessBoundary.newBuilder();
+    CredentialAccessBoundary accessBoundary =
+        cabBuilder
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource("resource")
+                    .setAvailablePermissions(ImmutableList.of("role1", "role2"))
+                    .setAvailabilityCondition(
+                        CredentialAccessBoundary.AccessBoundaryRule.AvailabilityCondition
+                            .newBuilder()
+                            .setExpression("a == b")
+                            .build())
+                    .build())
+            .build();
+
+    AccessToken token = factory.generateToken(accessBoundary);
+
+    CabToken cabToken = parseCabToken(token);
+    assertEquals("accessToken", cabToken.intermediateToken);
+
+    // Checks the encrypted restriction is the correct proto format of the CredentialAccessBoundary.
+    ClientSideAccessBoundary clientSideAccessBoundary =
+        decryptRestriction(
+            cabToken.encryptedRestriction,
+            transportFactory.transport.getAccessBoundarySessionKey());
+    assertEquals(1, clientSideAccessBoundary.getAccessBoundaryRulesCount());
+
+    ClientSideAccessBoundaryRule rule = clientSideAccessBoundary.getAccessBoundaryRules(0);
+
+    // Available resource and available permission should be the exact same as in original format.
+    assertEquals("resource", rule.getAvailableResource());
+    assertEquals(ImmutableList.of("role1", "role2"), rule.getAvailablePermissionsList());
+
+    // Availability condition should be in the correct compiled proto format.
+    Expr expr = rule.getCompiledAvailabilityCondition();
+    assertEquals("_==_", expr.getCallExpr().getFunction());
+    assertEquals("a", expr.getCallExpr().getArgs(0).getIdentExpr().getName());
+    assertEquals("b", expr.getCallExpr().getArgs(1).getIdentExpr().getName());
+  }
+
+  @Test
+  public void generateToken_withoutAvailabilityCondition_success() throws Exception {
+    MockStsTransportFactory transportFactory = new MockStsTransportFactory();
+    transportFactory.transport.setReturnAccessBoundarySessionKey(true);
+
+    ClientSideCredentialAccessBoundaryFactory.Builder builder =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder();
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        builder
+            .setSourceCredential(
+                getServiceAccountSourceCredentials(mockTokenServerTransportFactory))
+            .setHttpTransportFactory(transportFactory)
+            .build();
+
+    CredentialAccessBoundary.Builder cabBuilder = CredentialAccessBoundary.newBuilder();
+    CredentialAccessBoundary accessBoundary =
+        cabBuilder
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource("resource")
+                    .setAvailablePermissions(ImmutableList.of("role"))
+                    .build())
+            .build();
+
+    AccessToken token = factory.generateToken(accessBoundary);
+
+    CabToken cabToken = parseCabToken(token);
+    assertEquals("accessToken", cabToken.intermediateToken);
+
+    // Checks the encrypted restriction is the correct proto format of the CredentialAccessBoundary.
+    ClientSideAccessBoundary clientSideAccessBoundary =
+        decryptRestriction(
+            cabToken.encryptedRestriction,
+            transportFactory.transport.getAccessBoundarySessionKey());
+    assertEquals(1, clientSideAccessBoundary.getAccessBoundaryRulesCount());
+
+    ClientSideAccessBoundaryRule rule = clientSideAccessBoundary.getAccessBoundaryRules(0);
+
+    // Available resource and available permission should be the exact same as in original format.
+    assertEquals("resource", rule.getAvailableResource());
+    assertEquals(ImmutableList.of("role"), rule.getAvailablePermissionsList());
+
+    // Availability condition should be empty since it's not provided.
+    assertFalse(rule.hasCompiledAvailabilityCondition());
+  }
+
+  @Test
+  public void generateToken_withMultipleRules_success() throws Exception {
+    MockStsTransportFactory transportFactory = new MockStsTransportFactory();
+    transportFactory.transport.setReturnAccessBoundarySessionKey(true);
+
+    ClientSideCredentialAccessBoundaryFactory.Builder builder =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder();
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        builder
+            .setSourceCredential(
+                getServiceAccountSourceCredentials(mockTokenServerTransportFactory))
+            .setHttpTransportFactory(transportFactory)
+            .build();
+
+    CredentialAccessBoundary.Builder cabBuilder = CredentialAccessBoundary.newBuilder();
+    CredentialAccessBoundary accessBoundary =
+        cabBuilder
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource("resource1")
+                    .setAvailablePermissions(ImmutableList.of("role1-1", "role1-2"))
+                    .setAvailabilityCondition(
+                        CredentialAccessBoundary.AccessBoundaryRule.AvailabilityCondition
+                            .newBuilder()
+                            .setExpression("a == b")
+                            .build())
+                    .build())
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource("resource")
+                    .setAvailablePermissions(ImmutableList.of("role2"))
+                    .build())
+            .build();
+
+    AccessToken token = factory.generateToken(accessBoundary);
+
+    CabToken cabToken = parseCabToken(token);
+    assertEquals("accessToken", cabToken.intermediateToken);
+
+    // Checks the encrypted restriction is the correct proto format of the CredentialAccessBoundary.
+    ClientSideAccessBoundary clientSideAccessBoundary =
+        decryptRestriction(
+            cabToken.encryptedRestriction,
+            transportFactory.transport.getAccessBoundarySessionKey());
+    assertEquals(2, clientSideAccessBoundary.getAccessBoundaryRulesCount());
+
+    // Checks the first rule.
+    ClientSideAccessBoundaryRule rule1 = clientSideAccessBoundary.getAccessBoundaryRules(0);
+    assertEquals("resource1", rule1.getAvailableResource());
+    assertEquals(ImmutableList.of("role1-1", "role1-2"), rule1.getAvailablePermissionsList());
+
+    Expr expr = rule1.getCompiledAvailabilityCondition();
+    assertEquals("_==_", expr.getCallExpr().getFunction());
+    assertEquals("a", expr.getCallExpr().getArgs(0).getIdentExpr().getName());
+    assertEquals("b", expr.getCallExpr().getArgs(1).getIdentExpr().getName());
+
+    // Checks the second rule.
+    ClientSideAccessBoundaryRule rule2 = clientSideAccessBoundary.getAccessBoundaryRules(1);
+    assertEquals("resource", rule2.getAvailableResource());
+    assertEquals(ImmutableList.of("role2"), rule2.getAvailablePermissionsList());
+    assertFalse(rule2.hasCompiledAvailabilityCondition());
+  }
+
+  @Test
+  public void generateToken_withInvalidAvailabilityCondition_failure() throws Exception {
+    MockStsTransportFactory transportFactory = new MockStsTransportFactory();
+    transportFactory.transport.setReturnAccessBoundarySessionKey(true);
+
+    ClientSideCredentialAccessBoundaryFactory.Builder builder =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder();
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        builder
+            .setSourceCredential(
+                getServiceAccountSourceCredentials(mockTokenServerTransportFactory))
+            .setHttpTransportFactory(transportFactory)
+            .build();
+
+    CredentialAccessBoundary.Builder cabBuilder = CredentialAccessBoundary.newBuilder();
+    CredentialAccessBoundary accessBoundary =
+        cabBuilder
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource(
+                        "//storage.googleapis.com/projects/" + "_/buckets/example-bucket")
+                    .setAvailablePermissions(ImmutableList.of("inRole:roles/storage.objectViewer"))
+                    .setAvailabilityCondition(
+                        CredentialAccessBoundary.AccessBoundaryRule.AvailabilityCondition
+                            .newBuilder()
+                            .setExpression(
+                                "resource.name.startsWith('projects/_/"
+                                    + "buckets/example-bucket/objects/"
+                                    + "customer-a'") // No closing bracket
+                            .build())
+                    .build())
+            .build();
+
+    assertThrows(CelValidationException.class, () -> factory.generateToken(accessBoundary));
+  }
+
+  @Test
+  public void generateToken_withSessionKeyNotBase64Encoded_failure() throws Exception {
+    MockStsTransportFactory transportFactory = new MockStsTransportFactory();
+    transportFactory.transport.setReturnAccessBoundarySessionKey(true);
+    transportFactory.transport.setAccessBoundarySessionKey("invalid_key");
+
+    ClientSideCredentialAccessBoundaryFactory.Builder builder =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder();
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        builder
+            .setSourceCredential(
+                getServiceAccountSourceCredentials(mockTokenServerTransportFactory))
+            .setHttpTransportFactory(transportFactory)
+            .build();
+
+    CredentialAccessBoundary.Builder cabBuilder = CredentialAccessBoundary.newBuilder();
+    CredentialAccessBoundary accessBoundary =
+        cabBuilder
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource(
+                        "//storage.googleapis.com/projects/" + "_/buckets/example-bucket")
+                    .setAvailablePermissions(ImmutableList.of("inRole:roles/storage.objectViewer"))
+                    .setAvailabilityCondition(
+                        CredentialAccessBoundary.AccessBoundaryRule.AvailabilityCondition
+                            .newBuilder()
+                            .setExpression(
+                                "resource.name.startsWith('projects/_/"
+                                    + "buckets/example-bucket/objects/customer-a')")
+                            .build())
+                    .build())
+            .build();
+
+    assertThrows(IllegalStateException.class, () -> factory.generateToken(accessBoundary));
+  }
+
+  @Test
+  public void generateToken_withMalformSessionKey_failure() throws Exception {
+    MockStsTransportFactory transportFactory = new MockStsTransportFactory();
+    transportFactory.transport.setReturnAccessBoundarySessionKey(true);
+    transportFactory.transport.setAccessBoundarySessionKey("aW52YWxpZF9rZXk=");
+
+    ClientSideCredentialAccessBoundaryFactory.Builder builder =
+        ClientSideCredentialAccessBoundaryFactory.newBuilder();
+
+    ClientSideCredentialAccessBoundaryFactory factory =
+        builder
+            .setSourceCredential(
+                getServiceAccountSourceCredentials(mockTokenServerTransportFactory))
+            .setHttpTransportFactory(transportFactory)
+            .build();
+
+    CredentialAccessBoundary.Builder cabBuilder = CredentialAccessBoundary.newBuilder();
+    CredentialAccessBoundary accessBoundary =
+        cabBuilder
+            .addRule(
+                CredentialAccessBoundary.AccessBoundaryRule.newBuilder()
+                    .setAvailableResource(
+                        "//storage.googleapis.com/projects/" + "_/buckets/example-bucket")
+                    .setAvailablePermissions(ImmutableList.of("inRole:roles/storage.objectViewer"))
+                    .setAvailabilityCondition(
+                        CredentialAccessBoundary.AccessBoundaryRule.AvailabilityCondition
+                            .newBuilder()
+                            .setExpression(
+                                "resource.name.startsWith('projects/_/"
+                                    + "buckets/example-bucket/objects/customer-a')")
+                            .build())
+                    .build())
+            .build();
+
+    assertThrows(GeneralSecurityException.class, () -> factory.generateToken(accessBoundary));
   }
 }

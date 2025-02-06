@@ -20,11 +20,22 @@ downscoped tokens.
 - [*google-auth-library-cab-token-generator*](#google-auth-library-cab-token-generator):
 provides the client-side approach for generating downscoped tokens.
 
+> ⚠️ Important: If you accept a credential configuration (credential JSON/File/Stream) from an external source for
+authentication to Google Cloud Platform, you must validate it before providing it to any Google API or library. Providing
+an unvalidated credential configuration to Google APIs can compromise the security of your systems and data. For more
+information, refer to [documentation](https://cloud.google.com/docs/authentication/external/externally-sourced-credentials).
+
 **Table of contents:**
 
 
 * [Quickstart](#quickstart)
-
+  * [Importing the Auth Library](#importing-the-auth-library)
+    * [Preferred: Libraries-Bom](#java-sdk-libraries-bom)
+    * [Auth-Bom](#google-auth-library-bill-of-materials)
+      * [Maven](#maven)
+      * [Gradle](#gradle)
+      * [Scala](#scala)
+  * [Migrating from GoogleCredential to GoogleCredentials](#migrating-from-googlecredential-to-googlecredentials)
 * [google-auth-library-oauth2-http](#google-auth-library-oauth2-http)
   * [Application Default Credentials](#application-default-credentials)
   * [ImpersonatedCredentials](#impersonatedcredentials)
@@ -54,37 +65,111 @@ provides the client-side approach for generating downscoped tokens.
 
 ## Quickstart
 
-If you are using Maven, add this to your pom.xml file (notice that you can replace
-`google-auth-library-oauth2-http` with any of `google-auth-library-credentials` and
-`google-auth-library-appengine`, depending on your application needs):
+### Importing the Auth Library
 
-[//]: # ({x-version-update-start:google-auth-library-oauth2-http:released})
+#### Java SDK Libraries-Bom
+If you are trying to authenticate to a client library in the Java SDK (i.e. `google-cloud-datastore`),
+you can import add `libraries-bom` to manage the versions of your dependencies. The BOM will pull in the
+versions of Auth Library compatible with the client library.
+
+For example, importing with Maven from a pom.xml:
+
+[//]: # ({x-version-update-start:google-auth-library-bom:released})
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>libraries-bom</artifactId>
+      <version>26.53.0</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+If you don't plan using libraries-bom or the client libraries, see the next section on 
+[Google Auth Library Bill of Materials](#google-auth-library-bill-of-materials) to just import the relevant
+Auth modules.
+
+#### Google Auth Library Bill of Materials
+Alternatively, you can use the Google Auth Library Bill of Materials to ensure that the Auth modules
+and relevant transitive dependencies are compatible.
+
+##### Maven
+Add the following your pom.xml file
+
+[//]: # ({x-version-update-start:google-auth-library-bom:released})
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.auth</groupId>
+      <artifactId>google-auth-library-bom</artifactId>
+      <version>1.30.1</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+[//]: # ({x-version-update-end})
+
+In the `<dependency>` section, you can specify any of the Auth modules that are needed.
+For example, replace `google-auth-library-oauth2-http` below with any of `google-auth-library-credentials`
+and `google-auth-library-appengine`, depending on your application needs):
 
 ```xml
 <dependency>
   <groupId>com.google.auth</groupId>
+  <!-- Let the BOM manage the module and dependency versions -->
+  <!-- Replace with the module(s) that are needed -->
   <artifactId>google-auth-library-oauth2-http</artifactId>
-  <version>1.19.0</version>
 </dependency>
 ```
-[//]: # ({x-version-update-end})
 
+##### Gradle
+Add the following to your build.gradle file and specify any modules needed.
 
-If you are using Gradle, add this to your dependencies
-
-[//]: # ({x-version-update-start:google-auth-library-oauth2-http:released})
+[//]: # ({x-version-update-start:google-auth-library-bom:released})
 ```Groovy
-implementation 'com.google.auth:google-auth-library-oauth2-http:1.19.0'
+dependencies {
+    // The BOM will manage the module versions and transitive dependencies
+    implementation platform('com.google.auth:google-auth-library-bom:1.30.1')
+    // Replace with the module(s) that are needed
+    implementation 'com.google.auth:google-auth-library-oauth2-http'
+}
+
 ```
 [//]: # ({x-version-update-end})
+
+##### Scala
+Unfortunately, SBT [cannot](https://github.com/sbt/sbt/issues/4531) manage dependencies via Maven Bills of Materials. You will have to
+add the submodule directly. Make sure the module versions are aligned in case you are using more than
+one authentication module in order to prevent transitive dependency conflicts.
 
 If you are using SBT, add this to your dependencies
 
 [//]: # ({x-version-update-start:google-auth-library-oauth2-http:released})
 ```Scala
-libraryDependencies += "com.google.auth" % "google-auth-library-oauth2-http" % "1.19.0"
+// Replace this with the implementation module that suits your needs
+libraryDependencies += "com.google.auth" % "google-auth-library-oauth2-http" % "1.30.1"
 ```
 [//]: # ({x-version-update-end})
+
+### Migrating from GoogleCredential to GoogleCredentials
+[GoogleCredential](https://cloud.google.com/java/docs/reference/google-api-client/latest/com.google.api.client.googleapis.auth.oauth2.GoogleCredential)
+from google-api-java-client is deprecated and GoogleCredentials is the recommended replacement.
+
+We recommend users to instantiate GoogleCredentials with [Application Default Credentials (ADC)](#application-default-credentials):
+`GoogleCredentials credentials = GoogleCredentials.getApplicationDefault();`
+
+For [Google Api Client Library](https://cloud.google.com/apis/docs/client-libraries-explained#google-api-client-libraries) users, please refer to this
+[guide](https://developers.google.com/api-client-library/java/google-api-java-client/requests) for a example to instantiate a library with GoogleCredentials.
+
+For [Cloud Client Libraries](https://cloud.google.com/apis/docs/client-libraries-explained#cloud-client-libraries), the library will follow ADC to create a 
+default GoogleCredential. Users do not need to manually create any Credentials or pass it into the library.
 
 ## google-auth-library-oauth2-http
 
